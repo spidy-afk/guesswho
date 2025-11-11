@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game Lobby</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Top navigation -->
+  <header class="top-nav">
+    <div class="tabs">
+      <button class="active">GAMES</button>
+      <button>FORUM</button>
+      <button>PLAYERS</button>
+    </div>
+  </header>
+
+  <!-- Main container -->
+  <div class="container">
+    <!-- Left main content -->
+    <main class="main-content">
+      <div class="create-room">
+        <input id="playerNameInput" placeholder="Enter your name" />
+        <button id="enterLobbyBtn">Join Lobby</button>
+        <button id="createRoomBtn" class="create-btn" disabled>+ Create</button>
+      </div>
+
+      <div class="rooms" id="roomsList"></div>
+    </main>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span>Online Players</span>
+      </div>
+      <div class="online-list" id="onlinePlayers"></div>
+    </aside>
+  </div>
+
+  <!-- Firebase logic -->
+  <script type="module" src="script.js"></script>
+</body>
+</html>
