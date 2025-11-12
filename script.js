@@ -6,10 +6,11 @@ import {
   get,
   onValue,
   update,
-  remove
+  remove,
+  onDisconnect,
 } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
 
-// ✅ Firebase config
+// === Firebase config ===
 const firebaseConfig = {
   apiKey: "AIzaSyBA9FdmxpuaZnpMqG_f1el93ki2W4SJGT0",
   authDomain: "guesswho-67aa1.firebaseapp.com",
@@ -21,11 +22,11 @@ const firebaseConfig = {
   appId: "1:697156862877:web:32571abe5e1cd4e1aba574",
 };
 
-// === Firebase init ===
+// === Init Firebase ===
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// === UI elements ===
+// === Elements ===
 const nameInput = document.getElementById("playerNameInput");
 const joinBtn = document.getElementById("enterLobbyBtn");
 const createBtn = document.getElementById("createRoomBtn");
@@ -36,37 +37,46 @@ let playerName = "";
 let playerId = Math.random().toString(36).substring(2, 8);
 let currentRoomId = null;
 
-// === Join Lobby ===
+// === Join lobby ===
 joinBtn.addEventListener("click", async () => {
   const name = nameInput.value.trim();
-  if (!name) return;
-  playerName = name;
+  if (!name) return alert("Please enter your name");
 
+  playerName = name;
   joinBtn.disabled = true;
   nameInput.disabled = true;
   createBtn.disabled = false;
 
   await registerPlayer();
-  listenRooms();
   listenPlayers();
+  listenRooms();
 });
 
 // === Register player ===
 async function registerPlayer() {
   const playerRef = ref(db, `onlinePlayers/${playerId}`);
   await set(playerRef, { name: playerName, joinedAt: Date.now() });
-  window.addEventListener("beforeunload", () => remove(playerRef));
+  onDisconnect(playerRef).remove();
+
+  window.addEventListener("beforeunload", async () => {
+    await leaveRoom(currentRoomId);
+    await remove(playerRef);
+  });
 }
 
 // === Create room ===
 createBtn.addEventListener("click", async () => {
   if (!playerName) return;
-  if (currentRoomId) return;
+  if (currentRoomId) return alert("You are already in a room.");
+
+  // Remove old room if exists
+  await removePlayerFromAnyRoom();
 
   const roomsRef = ref(db, "rooms");
   const snap = await get(roomsRef);
   const rooms = snap.exists() ? snap.val() : {};
 
+  // Generate next numeric ID
   let nextId = 100;
   const ids = Object.keys(rooms)
     .map((n) => parseInt(n))
@@ -77,47 +87,80 @@ createBtn.addEventListener("click", async () => {
   await set(ref(db, `rooms/${roomId}`), {
     id: roomId,
     host: { id: playerId, name: playerName },
-    players: {
-      [playerId]: { name: playerName, ready: false },
-    },
+    players: { [playerId]: { name: playerName, ready: false } },
     createdAt: Date.now(),
     status: "waiting",
   });
 
   currentRoomId = roomId;
+  createBtn.disabled = true;
 });
 
-// === Listen for rooms ===
+// === Remove player from any old room ===
+async function removePlayerFromAnyRoom() {
+  const roomsSnap = await get(ref(db, "rooms"));
+  if (!roomsSnap.exists()) return;
+
+  const rooms = roomsSnap.val();
+  for (const id in rooms) {
+    if (rooms[id].players && rooms[id].players[playerId]) {
+      await remove(ref(db, `rooms/${id}/players/${playerId}`));
+      const newSnap = await get(ref(db, `rooms/${id}/players`));
+      if (!newSnap.exists()) await remove(ref(db, `rooms/${id}`));
+    }
+  }
+  currentRoomId = null;
+}
+
+// === Listen to rooms ===
 function listenRooms() {
   const roomsRef = ref(db, "rooms");
   onValue(roomsRef, (snap) => {
     roomsList.innerHTML = "";
     if (!snap.exists()) return;
+
     const rooms = snap.val();
     Object.keys(rooms)
       .sort((a, b) => parseInt(a) - parseInt(b))
-      .forEach((id) => renderRoom(rooms[id]));
+      .forEach((id) => {
+        const room = rooms[id];
+        // show only waiting/starting rooms
+        if (room.status === "waiting" || room.status === "starting") {
+          renderRoom(room);
+        }
+      });
+
+    // Auto-remove empty rooms
+    Object.keys(rooms).forEach(async (id) => {
+      const room = rooms[id];
+      if (!room.players || Object.keys(room.players).length === 0) {
+        setTimeout(async () => {
+          const snap = await get(ref(db, `rooms/${id}/players`));
+          if (!snap.exists()) await remove(ref(db, `rooms/${id}`));
+        }, 5000);
+      }
+    });
   });
 }
 
-// === Render each room ===
+// === Render Room ===
 function renderRoom(room) {
   const div = document.createElement("div");
   div.className = "room";
 
-  const roomHeader = document.createElement("div");
-  roomHeader.className = "room-header";
-  roomHeader.innerHTML = `<span>Room ${room.id}</span>`;
+  const header = document.createElement("div");
+  header.className = "room-header";
+  header.innerHTML = `<span>Room ${room.id}</span>`;
 
   const body = document.createElement("div");
   body.className = "room-body";
 
-  const left = document.createElement("div");
-  left.className = "player";
+  const playerSection = document.createElement("div");
+  playerSection.className = "player";
+  const players = room.players ? Object.values(room.players) : [];
+  const playerCount = players.length;
 
-  // show all players
-  const playerNames = room.players ? Object.values(room.players) : [];
-  left.innerHTML = playerNames
+  playerSection.innerHTML = players
     .map(
       (p) => `
       <div class="details">
@@ -127,60 +170,129 @@ function renderRoom(room) {
     )
     .join("");
 
-  const joinSection = document.createElement("div");
-  joinSection.className = "room-info";
+  const actionSection = document.createElement("div");
+  actionSection.className = "room-info";
 
   const isInRoom = room.players && room.players[playerId];
+
+  // === JOIN BUTTON ===
   if (!isInRoom && !currentRoomId) {
-    const joinBtn = document.createElement("button");
-    joinBtn.className = "join-btn";
-    joinBtn.textContent = "Join";
-    joinBtn.onclick = async () => {
-      await update(ref(db, `rooms/${room.id}/players`), {
-        [playerId]: { name: playerName, ready: false },
-      });
-      currentRoomId = room.id;
-    };
-    joinSection.appendChild(joinBtn);
+    const joinButton = document.createElement("button");
+    joinButton.className = "join-btn";
+
+    // Prevent join if full
+    if (playerCount >= 2) {
+      joinButton.textContent = "Room Full";
+      joinButton.disabled = true;
+    } else {
+      joinButton.textContent = "Join";
+      joinButton.onclick = async () => {
+        await removePlayerFromAnyRoom();
+        await update(ref(db, `rooms/${room.id}/players`), {
+          [playerId]: { name: playerName, ready: false },
+        });
+        currentRoomId = room.id;
+        createBtn.disabled = true;
+      };
+    }
+    actionSection.appendChild(joinButton);
   }
 
+  // === INSIDE ROOM ===
   if (isInRoom) {
-    const readyBtn = document.createElement("button");
-    readyBtn.className = "join-btn";
-    readyBtn.textContent = room.players[playerId].ready
+    const readyButton = document.createElement("button");
+    readyButton.className = "join-btn";
+    readyButton.textContent = room.players[playerId].ready
       ? "Unready"
       : "Ready";
-    readyBtn.onclick = async () => {
+
+    readyButton.onclick = async () => {
       const newReady = !room.players[playerId].ready;
       await update(ref(db, `rooms/${room.id}/players/${playerId}`), {
         ready: newReady,
       });
+
+      // If both ready → start countdown
+      const snap = await get(ref(db, `rooms/${room.id}/players`));
+      const playersData = snap.exists() ? snap.val() : {};
+      const allReady =
+        Object.keys(playersData).length === 2 &&
+        Object.values(playersData).every((p) => p.ready);
+
+      if (allReady) {
+        await update(ref(db, `rooms/${room.id}`), { status: "starting" });
+        startCountdown(room.id);
+      }
     };
 
-    const leaveBtn = document.createElement("button");
-    leaveBtn.className = "join-btn";
-    leaveBtn.style.background = "#dc3545";
-    leaveBtn.textContent = "Leave";
-    leaveBtn.onclick = async () => {
-      await remove(ref(db, `rooms/${room.id}/players/${playerId}`));
-      currentRoomId = null;
-
-      const newSnap = await get(ref(db, `rooms/${room.id}/players`));
-      if (!newSnap.exists()) await remove(ref(db, `rooms/${room.id}`));
+    const leaveButton = document.createElement("button");
+    leaveButton.className = "join-btn";
+    leaveButton.style.background = "#dc3545";
+    leaveButton.textContent = "Leave";
+    leaveButton.onclick = async () => {
+      await leaveRoom(room.id);
     };
 
-    joinSection.appendChild(readyBtn);
-    joinSection.appendChild(leaveBtn);
+    actionSection.appendChild(readyButton);
+    actionSection.appendChild(leaveButton);
   }
 
-  body.appendChild(left);
-  body.appendChild(joinSection);
-  div.appendChild(roomHeader);
+  // === STARTING ===
+  if (room.status === "starting") {
+    const countdown = document.createElement("div");
+    countdown.style.color = "green";
+    countdown.style.fontWeight = "bold";
+    countdown.textContent = "Game starting...";
+    actionSection.appendChild(countdown);
+
+    redirectToGame(room.id, room.players);
+  }
+
+  body.appendChild(playerSection);
+  body.appendChild(actionSection);
+  div.appendChild(header);
   div.appendChild(body);
   roomsList.appendChild(div);
 }
 
-// === Listen for online players ===
+// === Countdown ===
+async function startCountdown(roomId) {
+  let seconds = 5;
+  const countdownRef = ref(db, `rooms/${roomId}/countdown`);
+  const interval = setInterval(async () => {
+    await set(countdownRef, seconds);
+    if (seconds === 0) {
+      clearInterval(interval);
+      await update(ref(db, `rooms/${roomId}`), { status: "inGame" });
+    }
+    seconds--;
+  }, 1000);
+}
+
+// === Redirect only the two players ===
+function redirectToGame(roomId, players) {
+  const statusRef = ref(db, `rooms/${roomId}/status`);
+  onValue(statusRef, (snap) => {
+    if (snap.exists() && snap.val() === "inGame") {
+      if (players[playerId]) {
+        window.location.href = `game.html?room=${roomId}&player=${playerId}`;
+      }
+    }
+  });
+}
+
+// === Leave Room ===
+async function leaveRoom(roomId) {
+  if (!roomId) return;
+  await remove(ref(db, `rooms/${roomId}/players/${playerId}`));
+  currentRoomId = null;
+  createBtn.disabled = false;
+
+  const snap = await get(ref(db, `rooms/${roomId}/players`));
+  if (!snap.exists()) await remove(ref(db, `rooms/${roomId}`));
+}
+
+// === Online Players ===
 function listenPlayers() {
   const playersRef = ref(db, "onlinePlayers");
   onValue(playersRef, (snap) => {
