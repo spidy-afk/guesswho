@@ -20,14 +20,17 @@
   <div class="container">
     <!-- Left main content -->
     <main class="main-content">
-      <div class="create-room">
-        <input id="playerNameInput" placeholder="Enter your name" />
-        <button id="enterLobbyBtn">Join Lobby</button>
-        <button id="createRoomBtn" class="create-btn" disabled>+ Create</button>
-      </div>
+  <div class="create-room">
+    <input type="text" id="playerNameInput" placeholder="Enter nickname..." />
+    <button id="enterLobbyBtn">Enter Lobby</button>
+    <button id="createRoomBtn" disabled>+ Create Room</button>
+  </div>
 
-      <div class="rooms" id="roomsList"></div>
-    </main>
+  <div id="roomsList" class="rooms">
+    <!-- Rooms will be generated here dynamically -->
+  </div>
+</main>
+
 
     <!-- Sidebar -->
     <aside class="sidebar">
