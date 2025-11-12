@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stone Paper Scissor</title>
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+      import {
+        getDatabase,
+        ref,
+        set,
+        get,
+        onValue,
+        update,
+        remove,
+      } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+
+      // === Firebase config ===
+      const firebaseConfig = {
+        apiKey: "AIzaSyBA9FdmxpuaZnpMqG_f1el93ki2W4SJGT0",
+        authDomain: "guesswho-67aa1.firebaseapp.com",
+        databaseURL:
+          "https://guesswho-67aa1-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "guesswho-67aa1",
+        storageBucket: "guesswho-67aa1.firebasestorage.app",
+        messagingSenderId: "697156862877",
+        appId: "1:697156862877:web:32571abe5e1cd4e1aba574",
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getDatabase(app);
+
+      // === Params ===
+      const params = new URLSearchParams(window.location.search);
+      const roomId = params.get("room");
+      const playerId = params.get("player");
+
+      const statusText = document.getElementById("status");
+      const countdownText = document.getElementById("countdown");
+      const resultText = document.getElementById("result");
+      const choiceButtons = document.querySelectorAll(".choice");
+      const rematchDiv = document.getElementById("rematchBox");
+
+      let choice = null;
+      let timer = null;
+
+      async function startRound() {
+        choice = null;
+        resultText.textContent = "";
+        rematchDiv.style.display = "none";
+        choiceButtons.forEach((b) => {
+          b.disabled = false;
+          b.classList.remove("selected");
+        });
+
+        // clear old choices
+        await update(ref(db, `rooms/${roomId}/game`), {
+          [playerId]: null,
+        });
+
+        // 5-sec countdown
+        let timeLeft = 5;
+        countdownText.textContent = `Time left: ${timeLeft}`;
+        timer = setInterval(async () => {
+          timeLeft--;
+          countdownText.textContent = `Time left: ${timeLeft}`;
+          if (timeLeft <= 0) {
+            clearInterval(timer);
+            choiceButtons.forEach((b) => (b.disabled = true));
+            if (!choice) {
+              await update(ref(db, `rooms/${roomId}/game/${playerId}`), {
+                choice: "none",
+              });
+            }
+          }
+        }, 1000);
+      }
+
+      // === Handle choice ===
+      choiceButtons.forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          choiceButtons.forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+          choice = btn.dataset.choice;
+          await update(ref(db, `rooms/${roomId}/game/${playerId}`), {
+            choice,
+          });
+        });
+      });
+
+      // === Listen for opponent choice and results ===
+      onValue(ref(db, `rooms/${roomId}/game`), async (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.val();
+        const players = Object.keys(data);
+
+        if (players.length < 2) return;
+
+        const [p1, p2] = players;
+        const c1 = data[p1]?.choice || null;
+        const c2 = data[p2]?.choice || null;
+
+        if (c1 && c2) {
+          clearInterval(timer);
+          countdownText.textContent = "";
+
+          const outcome = decideWinner(c1, c2, playerId, p1, p2);
+          resultText.textContent = outcome.message;
+          if (outcome.result === "draw") {
+            setTimeout(() => startRound(), 2000);
+          } else {
+            showRematchButtons();
+          }
+        }
+      });
+
+      function decideWinner(c1, c2, self, p1, p2) {
+        if (c1 === "none" || c2 === "none") return { result: "draw", message: "Draw (timeout)" };
+        if (c1 === c2) return { result: "draw", message: "Draw!" };
+
+        const beats = { rock: "scissors", paper: "rock", scissors: "paper" };
+        const winner = beats[c1] === c2 ? p1 : p2;
+
+        if (winner === self) return { result: "win", message: "🎉 You Win!" };
+        return { result: "lose", message: "😞 You Lose!" };
+      }
+
+      function showRematchButtons() {
+        rematchDiv.style.display = "block";
+      }
+
+      document.getElementById("rematch").addEventListener("click", () => {
+        startRound();
+      });
+
+      document.getElementById("leave").addEventListener("click", async () => {
+        await update(ref(db, `rooms/${roomId}`), { status: "waiting" });
+        window.location.href = "index.html";
+      });
+
+      // === Start first round ===
+      statusText.textContent = `Room: ${roomId}`;
+      startRound();
+    </script>
+
+    <style>
+      body {
+        text-align: center;
+        font-family: "Segoe UI", sans-serif;
+        margin-top: 50px;
+        background: #fafafa;
+      }
+      h1 {
+        font-size: 2em;
+        margin-bottom: 10px;
+      }
+      .choices {
+        display: flex;
+        justify-content: center;
+        gap: 15px;
+        margin: 30px;
+      }
+      .choice {
+        font-size: 1.5em;
+        padding: 10px 20px;
+        border: 2px solid #333;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: 0.2s;
+        background: white;
+      }
+      .choice:hover {
+        background: #e0e0e0;
+      }
+      .choice.selected {
+        background: #4caf50;
+        color: white;
+        border-color: #4caf50;
+      }
+      #result {
+        font-size: 1.5em;
+        margin: 15px;
+        font-weight: bold;
+      }
+      #countdown {
+        font-size: 1.2em;
+        color: #555;
+      }
+      #rematchBox {
+        margin-top: 20px;
+        display: none;
+      }
+      #rematchBox button {
+        margin: 0 10px;
+        padding: 8px 16px;
+        font-size: 1em;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      #rematch {
+        background: #2196f3;
+        color: white;
+      }
+      #leave {
+        background: #f44336;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🪨📄✂️ Stone Paper Scissor</h1>
+    <div id="status"></div>
+    <div id="countdown"></div>
+
+    <div class="choices">
+      <button class="choice" data-choice="rock">🪨 Rock</button>
+      <button class="choice" data-choice="paper">📄 Paper</button>
+      <button class="choice" data-choice="scissors">✂️ Scissors</button>
+    </div>
+
+    <div id="result"></div>
+
+    <div id="rematchBox">
+      <button id="rematch">🔁 Rematch</button>
+      <button id="leave">🚪 Leave</button>
+    </div>
+  </body>
+</html>
